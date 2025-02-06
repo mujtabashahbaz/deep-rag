@@ -1,56 +1,75 @@
-import os
 import streamlit as st
+import tempfile
+import os
 import pdfplumber
-from dotenv import load_dotenv
-from langchain.text_splitter import RecursiveCharacterTextSplitter
-from langchain.vectorstores import InMemoryVectorStore
+from langchain_text_splitters import RecursiveCharacterTextSplitter
+from langchain_core.vectorstores import InMemoryVectorStore
 from langchain.embeddings import OpenAIEmbeddings
-from langchain.prompts import ChatPromptTemplate
-from langchain.chat_models import ChatGroq
+from openai import OpenAI
 
-# Load environment variables
-load_dotenv()
-
-# Get API Keys from .env
-OPENAI_API_KEY = os.getenv("OPENAI_API_KEY")
-GROQ_API_KEY = os.getenv("GROQ_API_KEY")
-
-# Initialize models with API keys
-EMBEDDING_MODEL = OpenAIEmbeddings(model="text-embedding-ada-002", openai_api_key=OPENAI_API_KEY)
-DOCUMENT_VECTOR_DB = InMemoryVectorStore(EMBEDDING_MODEL)
-LANGUAGE_MODEL = ChatGroq(model="deepseek-chat", groq_api_key=GROQ_API_KEY)
-
-# Streamlit UI Configuration
+# Set page title and theme
 st.set_page_config(page_title="📘 DocuMind AI", layout="wide")
-st.title("📘 DocuMind AI")
-st.markdown("### Your Intelligent Document Assistant")
-st.markdown("---")
 
-# File Upload Section
-uploaded_pdf = st.file_uploader(
-    "Upload a PDF document",
-    type="pdf",
-    accept_multiple_files=False,
-    help="Upload a PDF file, and the AI will assist you with document insights."
-)
+# Groq API Key (Set this in Streamlit Secrets for secure storage)
+GROQ_API_KEY = st.secrets["GROQ_API_KEY"]
+client = OpenAI(api_key=GROQ_API_KEY, base_url="https://api.groq.com")
 
-if uploaded_pdf:
-    # Extract text from PDF
-    with pdfplumber.open(uploaded_pdf) as pdf:
+# Embedding and Vector DB
+EMBEDDING_MODEL = OpenAIEmbeddings(model="text-embedding-ada-002", api_key=GROQ_API_KEY)
+DOCUMENT_VECTOR_DB = InMemoryVectorStore(EMBEDDING_MODEL)
+
+# Custom Prompt Template
+PROMPT_TEMPLATE = """You are an expert research assistant. Use the provided context to answer the query. 
+If unsure, state that you don't know. Be concise and factual (max 3 sentences).
+
+Query: {user_query} 
+Context: {document_context} 
+Answer:
+"""
+
+# Function to Process PDF
+def process_uploaded_pdf(uploaded_file):
+    with tempfile.NamedTemporaryFile(delete=False, suffix=".pdf") as tmp_file:
+        tmp_file.write(uploaded_file.getbuffer())
+        tmp_path = tmp_file.name
+
+    with pdfplumber.open(tmp_path) as pdf:
         raw_text = "\n\n".join([page.extract_text() for page in pdf.pages if page.extract_text()])
 
-    # Split text into chunks for processing
-    text_processor = RecursiveCharacterTextSplitter(
-        chunk_size=1000, chunk_overlap=200, add_start_index=True
-    )
+    text_processor = RecursiveCharacterTextSplitter(chunk_size=1000, chunk_overlap=200)
     document_chunks = text_processor.create_documents([raw_text])
 
-    # Store document in vector database
     DOCUMENT_VECTOR_DB.add_documents(document_chunks)
+    os.remove(tmp_path)  # Clean up temp file
 
-    st.success("✅ Document processed successfully! Ask your questions below.")
+# Function to Find Relevant Docs
+def find_related_documents(query):
+    return DOCUMENT_VECTOR_DB.similarity_search(query)
 
-    # User query input
+# Function to Generate Response using Groq's DeepSeek API
+def generate_answer(user_query, context_documents):
+    context_text = "\n\n".join([doc.page_content for doc in context_documents])
+    prompt = PROMPT_TEMPLATE.format(user_query=user_query, document_context=context_text)
+    
+    response = client.completions.create(
+        model="deepseek-chat",
+        messages=[{"role": "system", "content": prompt}],
+        max_tokens=500
+    )
+    
+    return response.choices[0].message["content"]
+
+# Streamlit UI
+st.title("📘 DocuMind AI")
+st.markdown("### Your Intelligent Document Assistant")
+
+uploaded_pdf = st.file_uploader("Upload Research Document (PDF)", type="pdf")
+
+if uploaded_pdf:
+    st.info("📄 Processing document...")
+    process_uploaded_pdf(uploaded_pdf)
+    st.success("✅ Document indexed! Ask your questions below.")
+
     user_input = st.chat_input("Enter your question about the document...")
 
     if user_input:
@@ -58,21 +77,8 @@ if uploaded_pdf:
             st.write(user_input)
 
         with st.spinner("Analyzing document..."):
-            relevant_docs = DOCUMENT_VECTOR_DB.similarity_search(user_input)
-            context_text = "\n\n".join([doc.page_content for doc in relevant_docs])
+            relevant_docs = find_related_documents(user_input)
+            ai_response = generate_answer(user_input, relevant_docs)
 
-            # AI Prompt Template
-            prompt_template = """
-            You are an expert research assistant. Use the provided context to answer the query. 
-            If unsure, state that you don't know. Be concise and factual (max 3 sentences).
-            Query: {user_query} 
-            Context: {document_context} 
-            Answer:
-            """
-            conversation_prompt = ChatPromptTemplate.from_template(prompt_template)
-            response_chain = conversation_prompt | LANGUAGE_MODEL
-            ai_response = response_chain.invoke({"user_query": user_input, "document_context": context_text})
-
-        # Display AI response
         with st.chat_message("assistant", avatar="🤖"):
             st.write(ai_response)
