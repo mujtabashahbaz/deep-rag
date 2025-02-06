@@ -2,21 +2,22 @@ import streamlit as st
 import tempfile
 import os
 import pdfplumber
-from langchain_text_splitters import RecursiveCharacterTextSplitter
-from langchain_core.vectorstores import InMemoryVectorStore
+from langchain.text_splitters import RecursiveCharacterTextSplitter
+from langchain.vectorstores import InMemoryVectorStore
 from langchain.embeddings import OpenAIEmbeddings
 from openai import OpenAI
 
 # Set page title and theme
 st.set_page_config(page_title="📘 DocuMind AI", layout="wide")
 
-# Groq API Key (Set this in Streamlit Secrets for secure storage)
+# Retrieve API Keys from Streamlit Secrets
 GROQ_API_KEY = st.secrets["GROQ_API_KEY"]
-client = OpenAI(api_key=GROQ_API_KEY, base_url="https://api.groq.com")
+OPENAI_API_KEY = st.secrets["OPENAI_API_KEY"]
 
-# Embedding and Vector DB
-EMBEDDING_MODEL = OpenAIEmbeddings(model="text-embedding-ada-002", api_key=GROQ_API_KEY)
-DOCUMENT_VECTOR_DB = InMemoryVectorStore(EMBEDDING_MODEL)
+# Initialize clients and models
+groq_client = OpenAI(api_key=GROQ_API_KEY, base_url="https://api.groq.com")  # Using Groq's DeepSeek API
+embedding_model = OpenAIEmbeddings(model="text-embedding-ada-002", api_key=OPENAI_API_KEY)  # Using OpenAI for embeddings
+DOCUMENT_VECTOR_DB = InMemoryVectorStore(embedding_model)
 
 # Custom Prompt Template
 PROMPT_TEMPLATE = """You are an expert research assistant. Use the provided context to answer the query. 
@@ -51,7 +52,7 @@ def generate_answer(user_query, context_documents):
     context_text = "\n\n".join([doc.page_content for doc in context_documents])
     prompt = PROMPT_TEMPLATE.format(user_query=user_query, document_context=context_text)
     
-    response = client.completions.create(
+    response = groq_client.completions.create(
         model="deepseek-chat",
         messages=[{"role": "system", "content": prompt}],
         max_tokens=500
