@@ -2,8 +2,8 @@ import streamlit as st
 import tempfile
 import os
 import pdfplumber
-from langchain.text_splitters import RecursiveCharacterTextSplitter
-from langchain.vectorstores import InMemoryVectorStore
+from langchain_text_splitters import RecursiveCharacterTextSplitter
+from langchain_core.vectorstores import InMemoryVectorStore
 from langchain.embeddings import OpenAIEmbeddings
 from openai import OpenAI
 
